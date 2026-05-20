@@ -1,89 +1,253 @@
-# Voice-Based Meeting Summarizer
+# Voice Meeting Summarizer
 
-Welcome to the Voice-Based Meeting Summarizer! This project is an educational, production-ready system designed to take a long meeting audio file, transcribe it into text, extract key points using an AI language model, and read the summary back to you.
+Upload a meeting recording. Get back a structured summary and an audio readout of it.
 
-## 🧠 Core Concepts (Beginner Friendly)
+Built with FastAPI, OpenAI Whisper, GPT-4o-mini, and ElevenLabs TTS.
 
-If you're new to AI engineering, here's a breakdown of the magic happening behind the scenes:
+---
 
-1. **Speech-to-Text (STT):** We use **OpenAI's Whisper** model. Think of Whisper as a very fast typist who listens to the audio and types out every word.
-2. **Chunking:** Audio files can be huge! If you try to send a 2-hour audio file to an AI model all at once, it might crash or run out of memory. We use a library called `pydub` to slice the audio into smaller 10-minute "chunks". We process them one by one, then stitch the text together.
-3. **Large Language Models (LLMs):** Once we have the full transcript, it's just a giant wall of text. We send this to **GPT-4o-mini**. We use a technique called "Structured Outputs" (via Pydantic) to force the AI to return data in a strict JSON format (Key Points, Action Items, Decisions, Summary).
-4. **Text-to-Speech (TTS):** We take the executive summary text and send it to **ElevenLabs**, which uses highly realistic AI voices to read the text out loud, returning an MP3 file.
-5. **FastAPI & Async:** The whole system runs on a web framework called FastAPI. We use `async` (asynchronous) programming, meaning the server doesn't freeze while waiting for OpenAI or ElevenLabs to respond. It can handle other requests in the meantime.
+## What it does
 
-## 📂 Project Structure
+Most meeting recordings sit in a folder forever because nobody wants to re-listen to a 45-minute call just to find out who was supposed to do what. This tool fixes that.
 
-- `main.py`: The entry point. It starts the server.
-- `core/config.py`: Loads our API keys securely from the `.env` file.
-- `models/schemas.py`: Defines the strict data structures (Pydantic models) we expect from the LLM and send back to the user.
-- `api/routes.py`: Defines the `/summarize` URL endpoint. This is the "manager" that calls all the services in order.
-- `services/`: The actual workers.
-  - `audio_processor.py`: Chops up long audio files.
-  - `stt_service.py`: Talks to OpenAI Whisper.
-  - `summarizer_service.py`: Talks to OpenAI GPT.
-  - `tts_service.py`: Talks to ElevenLabs.
-- `temp_audio/`: A temporary folder where audio chunks and summaries are saved.
+You throw in an audio file (mp3, wav, m4a — whatever you have), and it:
 
-## 🛠️ Setup Instructions
+1. **Transcribes** the entire recording using OpenAI's Whisper
+2. **Splits long audio** into chunks automatically so you're not hitting API limits
+3. **Summarizes** the transcript through GPT-4o-mini, pulling out the stuff that actually matters
+4. **Generates a voice summary** via ElevenLabs so you can listen to the recap on the go
 
-### 1. Prerequisites
-- Python 3.10+
-- `ffmpeg` installed on your system (Required by `pydub` to manipulate audio).
-  - On Ubuntu/Debian: `sudo apt install ffmpeg`
-  - On Mac: `brew install ffmpeg`
+The output is a JSON response with key discussion points, action items, decisions made, and a short executive summary. Plus a downloadable MP3 of the summary read aloud.
 
-### 2. Install Dependencies
+---
+
+## Architecture
+
+```
+voice_meeting_summarizer/
+├── main.py                          # FastAPI entry point
+├── core/
+│   └── config.py                    # env vars, settings
+├── api/
+│   └── routes.py                    # POST /summarize, GET /download
+├── services/
+│   ├── audio_processor.py           # chunking with pydub
+│   ├── stt_service.py               # Whisper transcription
+│   ├── summarizer_service.py        # GPT structured output
+│   └── tts_service.py               # ElevenLabs voice generation
+├── models/
+│   └── schemas.py                   # Pydantic request/response models
+├── temp_audio/                      # runtime temp files (gitignored)
+├── requirements.txt
+├── .env.example
+└── .gitignore
+```
+
+The services are intentionally decoupled. Swapping Whisper for Deepgram or GPT for Claude is a single-file change — nothing else needs to know about it.
+
+---
+
+## How the pipeline works
+
+```
+Audio File (.mp3/.wav/.m4a)
+        │
+        ▼
+┌─────────────────┐
+│ audio_processor  │  ← splits into 10-min chunks if needed
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   stt_service    │  ← Whisper API, chunk by chunk
+└────────┬────────┘
+         │
+         ▼
+   Full Transcript
+         │
+         ▼
+┌─────────────────┐
+│  summarizer      │  ← GPT-4o-mini w/ structured outputs
+└────────┬────────┘
+         │
+         ▼
+   Structured JSON
+   (key points, action items, decisions, exec summary)
+         │
+         ▼
+┌─────────────────┐
+│   tts_service    │  ← ElevenLabs reads the summary aloud
+└────────┬────────┘
+         │
+         ▼
+   Summary MP3 file
+```
+
+---
+
+## Prerequisites
+
+- **Python 3.10+**
+- **ffmpeg** — needed by pydub for audio processing
+  ```bash
+  # Ubuntu/Debian
+  sudo apt install ffmpeg
+
+  # macOS
+  brew install ffmpeg
+  ```
+- **API Keys** for OpenAI and ElevenLabs (details below)
+
+---
+
+## Setup
+
 ```bash
-# Create a virtual environment
+git clone https://github.com/0xSiddu/voice-meeting-summarizer.git
+cd voice-meeting-summarizer
+
 python3 -m venv venv
-
-# Activate it (Linux/Mac)
 source venv/bin/activate
-
-# Install the required packages
 pip install -r requirements.txt
 ```
 
-### 3. Environment Variables
-Copy the `.env.example` file to a new file called `.env`:
+Copy the example env file and fill in your keys:
+
 ```bash
 cp .env.example .env
 ```
-Open `.env` and fill in your API keys:
-- `OPENAI_API_KEY`: Get this from [platform.openai.com](https://platform.openai.com)
-- `ELEVENLABS_API_KEY`: Get this from [elevenlabs.io](https://elevenlabs.io)
 
-### 4. Run the Server
+```
+OPENAI_API_KEY=sk-...
+ELEVENLABS_API_KEY=...
+```
+
+| Variable | Where to get it |
+|---|---|
+| `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| `ELEVENLABS_API_KEY` | [elevenlabs.io/app/settings/api-keys](https://elevenlabs.io/app/settings/api-keys) |
+
+---
+
+## Running
+
 ```bash
 uvicorn main:app --reload
 ```
-The server will start at `http://127.0.0.1:8000`.
 
-## 🚀 Example Usage
+Server starts at `http://localhost:8000`. Hit `/docs` for the interactive Swagger UI.
 
-FastAPI comes with a built-in testing interface called Swagger UI.
-1. Open your browser and go to `http://127.0.0.1:8000/docs`
-2. Click on the `/summarize` endpoint.
-3. Click **"Try it out"**.
-4. Upload an audio file (mp3, m4a, or wav).
-5. Click **"Execute"**.
+---
 
-*Wait for a few moments as the AI processes the audio...*
+## Usage
 
-**The Response:**
-You will receive a beautiful JSON response containing:
+### Via Swagger UI (easiest)
+
+1. Go to `http://localhost:8000/docs`
+2. Open `POST /summarize`
+3. Click "Try it out"
+4. Upload your audio file
+5. Hit Execute
+
+### Via curl
+
+```bash
+curl -X POST http://localhost:8000/summarize \
+  -F "file=@meeting_recording.mp3"
+```
+
+### Response
+
 ```json
 {
-  "key_points": ["Point 1", "Point 2"],
-  "action_items": ["Alice needs to review the PR"],
-  "decisions_made": ["We will use FastAPI for the backend"],
-  "executive_summary": "The team discussed the new backend architecture...",
-  "audio_summary_url": "/download/1234_summary.mp3"
+  "key_points": [
+    "Q3 revenue is tracking 12% above forecast",
+    "Mobile app redesign pushed to next sprint"
+  ],
+  "action_items": [
+    "Sarah to finalize the vendor contract by Friday",
+    "Dev team to scope the auth migration"
+  ],
+  "decisions_made": [
+    "Go with AWS over GCP for the new infra",
+    "Hire two more backend engineers in Q4"
+  ],
+  "executive_summary": "The team reviewed Q3 progress, discussed the infrastructure migration timeline, and agreed on hiring priorities for the remainder of the year.",
+  "audio_summary_url": "/download/abc123_summary.mp3"
 }
 ```
-You can then visit `http://127.0.0.1:8000/download/1234_summary.mp3` to listen to the AI-generated voice summary!
 
-## 🔮 Advanced Extensibility
+The audio file can be downloaded from the URL in the response.
 
-This system is modular. To add real-time streaming transcription in the future, you would simply create a new endpoint in `api/routes.py` that accepts WebSockets, and create a new service `services/streaming_stt_service.py` using Deepgram's streaming API, keeping the rest of the architecture intact!
+---
+
+## Running on Google Colab
+
+Since Colab doesn't expose localhost, you'll need ngrok to create a public tunnel.
+
+```python
+# Cell 1 — Setup
+!git clone https://github.com/0xSiddu/voice-meeting-summarizer.git
+%cd voice-meeting-summarizer
+!pip install -r requirements.txt pyngrok nest-asyncio
+!apt-get install -y ffmpeg
+
+# Cell 2 — Write your .env
+with open(".env", "w") as f:
+    f.write("OPENAI_API_KEY=sk-your-key-here\n")
+    f.write("ELEVENLABS_API_KEY=your-key-here\n")
+
+# Cell 3 — Start the server
+import nest_asyncio
+from pyngrok import ngrok
+import uvicorn
+from main import app
+
+ngrok.set_auth_token("your-ngrok-token")  # from dashboard.ngrok.com
+nest_asyncio.apply()
+
+tunnel = ngrok.connect(8000)
+print(f"Public URL: {tunnel.public_url}/docs")
+uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+---
+
+## Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `OPENAI_API_KEY` | — | Required. Used for Whisper + GPT |
+| `ELEVENLABS_API_KEY` | — | Optional. Skips TTS if not set |
+| `CHUNK_THRESHOLD_MS` | `600000` | Audio chunk size in ms (default 10 min) |
+
+---
+
+## Tech Stack
+
+| Component | Technology |
+|---|---|
+| Web Framework | FastAPI |
+| Speech-to-Text | OpenAI Whisper |
+| Summarization | GPT-4o-mini (structured outputs) |
+| Text-to-Speech | ElevenLabs |
+| Audio Processing | pydub + ffmpeg |
+| HTTP Client | httpx (async) |
+
+---
+
+## Extending this
+
+A few things that would be straightforward to add given the current architecture:
+
+- **Speaker diarization** — pipe through pyannote before summarization so the LLM knows who said what
+- **Streaming transcription** — add a WebSocket endpoint using Deepgram's real-time API
+- **Web UI** — a simple HTML page with a file upload form and a results panel
+- **Webhook notifications** — fire a callback when processing finishes for async workflows
+- **Storage backend** — swap the local `temp_audio/` dir for S3/GCS in production
+
+---
+
+## License
+
+MIT
